@@ -1,16 +1,37 @@
 import os
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from google import genai
 import joblib
 import numpy as np
 
+from dotenv import load_dotenv
+load_dotenv()
+
 app = Flask(__name__)
 
+# Rate limiter — protects your Gemini API quota
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["100 per hour"],
+    storage_uri="memory://",
+)
+
+# Load the trained model, scaler, and feature names
 model = joblib.load('model/wine_model.pkl')
 scaler = joblib.load('model/scaler.pkl')
-
-# Convert feature names: replace spaces with underscores to match HTML form
 feature_names = [str(f).strip().replace(' ', '_') for f in joblib.load('model/features.pkl')]
 print("Loaded features:", feature_names)
+
+# Initialize Gemini client (reads GEMINI_API_KEY from environment)
+genai_client = None
+if os.environ.get('GEMINI_API_KEY'):
+    genai_client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
+    print("Gemini client initialized.")
+else:
+    print("WARNING: GEMINI_API_KEY not set. Chatbot will be disabled.")
 
 
 def generate_wine_profile(data):
@@ -24,7 +45,6 @@ def generate_wine_profile(data):
     density = float(data['density'])
     sulphates = float(data['sulphates'])
 
-    # --- Trait pills (unchanged) ---
     if alcohol >= 12:
         traits.append(("🔥", "High Alcohol"))
     elif alcohol < 10:
@@ -55,7 +75,6 @@ def generate_wine_profile(data):
     if volatile_acidity >= 0.8:
         traits.append(("⚠️", "Drink Soon"))
 
-    # --- Body sentence (part 1) ---
     if alcohol >= 12:
         body = "This is a bold, full-bodied wine with a rich, warming character."
     elif alcohol < 10:
@@ -63,9 +82,7 @@ def generate_wine_profile(data):
     else:
         body = "This is a well-balanced, medium-bodied wine."
 
-    # --- Flavor sentence (part 2) ---
     flavor_parts = []
-
     if residual_sugar >= 6:
         flavor_parts.append("a sweet, honeyed finish")
     elif residual_sugar < 3:
@@ -81,14 +98,11 @@ def generate_wine_profile(data):
     elif total_so2 < 50:
         flavor_parts.append("low sulfites meant for early enjoyment")
 
-    flavor = "On the palate, it offers " + ", ".join(flavor_parts[:-1])
     if len(flavor_parts) > 1:
-        flavor += ", and " + flavor_parts[-1]
+        flavor = "On the palate, it offers " + ", ".join(flavor_parts[:-1]) + ", and " + flavor_parts[-1] + "."
     else:
-        flavor = "On the palate, it offers " + flavor_parts[0]
-    flavor += "."
+        flavor = "On the palate, it offers " + flavor_parts[0] + "."
 
-    # --- Closing note (part 3) ---
     closing = ""
     if sulphates >= 0.7 and volatile_acidity < 0.8:
         closing = " With strong aging potential, this wine will reward patience."
@@ -96,7 +110,6 @@ def generate_wine_profile(data):
         closing = " Best enjoyed soon while its acidity is still lively."
 
     paragraph = f"{body} {flavor}{closing}"
-
     return traits, paragraph
 
 
@@ -108,14 +121,7 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        print("Form data received:", dict(request.form))
-
-        values = []
-        for feat in feature_names:
-            if feat not in request.form:
-                raise KeyError(f"Form is missing: {feat}")
-            values.append(float(request.form[feat]))
-
+        values = [float(request.form[feat]) for feat in feature_names]
         input_array = np.array([values])
         input_scaled = scaler.transform(input_array)
 
@@ -154,6 +160,49 @@ def predict():
             color="red",
             values=request.form
         ), 500
+
+
+@app.route('/chat', methods=['POST'])
+@limiter.limit("5 per minute")
+def chat():
+    """Chat endpoint — sends user message to Gemini with wine context."""
+    if genai_client is None:
+        return jsonify({"reply": "Chatbot is currently unavailable. Please configure the API key."}), 503
+
+    try:
+        data = request.get_json()
+        user_message = data.get('message', '').strip()
+
+        if not user_message:
+            return jsonify({"reply": "Please type a question."}), 400
+
+        # Build context from the current form values if provided
+        context = data.get('context', '')
+        context_prompt = ""
+        if context:
+            context_prompt = f"""
+The user is currently looking at a wine with these properties:
+{context}
+
+Use this information to answer their question if relevant.
+"""
+
+        system_instruction = """You are a helpful wine expert assistant built into a Wine Quality Predictor app. 
+Answer questions about wine chemistry, wine quality, tasting notes, and how to interpret the app's predictions.
+Keep answers concise (2-4 sentences) and friendly. If the user asks something unrelated to wine or the app, politely redirect."""
+
+        full_prompt = f"{system_instruction}\n{context_prompt}\nUser question: {user_message}"
+
+        response = genai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=full_prompt,
+        )
+
+        return jsonify({"reply": response.text})
+
+    except Exception as e:
+        print("CHAT ERROR:", e)
+        return jsonify({"reply": "Sorry, something went wrong. Please try again."}), 500
 
 
 if __name__ == '__main__':

@@ -163,5 +163,85 @@
             resultCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
     </script>
+
+    <!-- Chatbot Widget -->
+<button id="chatToggle" class="chat-toggle" onclick="toggleChat()">
+    <span id="chatIcon">💬</span>
+</button>
+
+<div id="chatPanel" class="chat-panel hidden">
+    <div class="chat-header">
+        <span>🍷 Wine Assistant</span>
+        <button onclick="toggleChat()" class="chat-close">✕</button>
+    </div>
+    <div id="chatMessages" class="chat-messages">
+        <div class="chat-message bot">Hi! Ask me anything about wine or your prediction. 🍷</div>
+    </div>
+    <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="Ask about wine..." onkeypress="if(event.key==='Enter') sendMessage()">
+        <button onclick="sendMessage()" id="chatSend">Send</button>
+    </div>
+</div>
+
+<script>
+    function toggleChat() {
+        const panel = document.getElementById('chatPanel');
+        const icon = document.getElementById('chatIcon');
+        panel.classList.toggle('hidden');
+        icon.textContent = panel.classList.contains('hidden') ? '💬' : '✕';
+    }
+
+    function getCurrentContext() {
+        // Build a short description of the current sliders
+        const fields = ['alcohol', 'volatile_acidity', 'total_sulfur_dioxide', 'residual_sugar', 'density', 'sulphates', 'pH', 'fixed_acidity', 'citric_acid', 'chlorides', 'free_sulfur_dioxide'];
+        const parts = [];
+        fields.forEach(f => {
+            const el = document.getElementById(f);
+            if (el) parts.push(`${f.replace('_', ' ')}: ${el.value}`);
+        });
+        return parts.join(', ');
+    }
+
+    async function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const messages = document.getElementById('chatMessages');
+        const message = input.value.trim();
+        if (!message) return;
+
+        // Add user message
+        const userDiv = document.createElement('div');
+        userDiv.className = 'chat-message user';
+        userDiv.textContent = message;
+        messages.appendChild(userDiv);
+        input.value = '';
+
+        // Add loading indicator
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'chat-message bot loading';
+        loadingDiv.textContent = '...';
+        messages.appendChild(loadingDiv);
+        messages.scrollTop = messages.scrollHeight;
+
+        try {
+            const response = await fetch('/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: message,
+                    context: getCurrentContext()
+                })
+            });
+
+            const data = await response.json();
+            loadingDiv.textContent = data.reply;
+            loadingDiv.classList.remove('loading');
+        } catch (err) {
+            loadingDiv.textContent = 'Sorry, I could not connect. Please try again.';
+            loadingDiv.classList.remove('loading');
+        }
+
+        messages.scrollTop = messages.scrollHeight;
+    }
+</script>
 </body>
 </html>
