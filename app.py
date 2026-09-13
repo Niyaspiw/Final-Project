@@ -194,7 +194,7 @@ Keep answers concise (2-4 sentences) and friendly. If the user asks something un
         full_prompt = f"{system_instruction}\n{context_prompt}\nUser question: {user_message}"
 
         response = genai_client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.6-flash',
             contents=full_prompt,
         )
 
