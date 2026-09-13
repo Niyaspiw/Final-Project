@@ -201,8 +201,17 @@ Keep answers concise (2-4 sentences) and friendly. If the user asks something un
         return jsonify({"reply": response.text})
 
     except Exception as e:
-        print("CHAT ERROR:", e)
-        return jsonify({"reply": "Sorry, something went wrong. Please try again."}), 500
+        error_text = str(e)
+        print("CHAT ERROR:", error_text)
+
+        if "429" in error_text or "quota" in error_text.lower() or "rate" in error_text.lower():
+            reply = "I've reached my usage limit for now. Please try again in a minute."
+        elif "503" in error_text or "overloaded" in error_text.lower():
+            reply = "The AI service is busy right now. Please try again in a few seconds."
+        else:
+            reply = "Sorry, something went wrong. Please try again."
+
+        return jsonify({"reply": reply}), 500
 
 
 if __name__ == '__main__':
