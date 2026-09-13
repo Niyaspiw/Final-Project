@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wine Quality Predictor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="bg-overlay"></div>
+
+    <div class="container">
+        <header class="header">
+            <div class="logo">🍷</div>
+            <h1>Wine Quality Predictor</h1>
+            <p class="subtitle">Fine-tune the chemical properties to classify the wine's quality</p>
+        </header>
+
+        <form action="/predict" method="POST" id="wineForm">
+            {% set groups = {
+                'Acidity': ['fixed_acidity', 'volatile_acidity', 'citric_acid', 'pH'],
+                'Sulfur & Chlorides': ['free_sulfur_dioxide', 'total_sulfur_dioxide', 'chlorides'],
+                'Physical Properties': ['residual_sugar', 'density', 'alcohol', 'sulphates']
+            } %}
+
+            {% set ranges = {
+                'fixed_acidity': [4, 16, 0.1, 8.3],
+                'volatile_acidity': [0.1, 1.6, 0.01, 0.5],
+                'citric_acid': [0, 1, 0.01, 0.3],
+                'residual_sugar': [0.9, 16, 0.1, 2.5],
+                'chlorides': [0.01, 0.6, 0.001, 0.08],
+                'free_sulfur_dioxide': [1, 72, 1, 15],
+                'total_sulfur_dioxide': [6, 289, 1, 46],
+                'density': [0.99, 1.004, 0.0001, 0.9968],
+                'pH': [2.7, 4.0, 0.01, 3.3],
+                'sulphates': [0.3, 2.0, 0.01, 0.65],
+                'alcohol': [8.0, 15.0, 0.1, 10.4]
+            } %}
+
+            {% for group_name, feats in groups.items() %}
+            <section class="group">
+                <h2 class="group-title">{{ group_name }}</h2>
+                <div class="grid">
+                    {% for feature in feats %}
+                    {% set r = ranges[feature] %}
+                    <div class="input-group">
+                        <div class="label-row">
+                            <label for="{{ feature }}">{{ feature.replace('_', ' ').title() }}</label>
+                            <input
+                                type="number"
+                                class="value-badge"
+                                id="badge-{{ feature }}"
+                                data-target="{{ feature }}"
+                                min="{{ r[0] }}"
+                                max="{{ r[1] }}"
+                                step="{{ r[2] }}"
+                                value="{{ values[feature] if values else r[3] }}">
+                        </div>
+                        <input
+                            type="range"
+                            id="{{ feature }}"
+                            name="{{ feature }}"
+                            min="{{ r[0] }}"
+                            max="{{ r[1] }}"
+                            step="{{ r[2] }}"
+                            value="{{ values[feature] if values else r[3] }}"
+                            oninput="document.getElementById('badge-{{ feature }}').value = this.value">
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endfor %}
+
+            <div class="button-row">
+                <button type="button" class="btn-secondary" onclick="resetForm()">Reset</button>
+                <button type="submit" class="btn-primary" id="predictBtn">
+                    <span id="btnText">Predict Quality</span>
+                    <span id="btnSpinner" class="spinner hidden"></span>
+                </button>
+            </div>
+        </form>
+
+        {% if prediction_text %}
+        <div class="result-card {{ color }} fade-in">
+            <div class="result-icon">{{ '✓' if color == 'green' else '✕' }}</div>
+            <div class="result-content">
+                <h2>{{ prediction_text }}</h2>
+                <p>Model confidence</p>
+                <div class="confidence-bar">
+                    <div class="confidence-fill" style="width: {{ confidence }};"></div>
+                </div>
+                <span class="confidence-text">{{ confidence }}</span>
+
+                {% if traits %}
+                <div class="wine-profile">
+                    <h3 class="profile-title">Wine Profile</h3>
+                    <div class="trait-list">
+                        {% for icon, label in traits %}
+                        <span class="trait-pill">{{ icon }} {{ label }}</span>
+                        {% endfor %}
+                    </div>
+                    <p class="profile-text">{{ paragraph }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        // Sync number input → slider
+        document.querySelectorAll('.value-badge').forEach(badge => {
+            badge.addEventListener('input', function() {
+                const target = document.getElementById(this.dataset.target);
+                if (target) {
+                    let val = parseFloat(this.value);
+                    const min = parseFloat(target.min);
+                    const max = parseFloat(target.max);
+                    if (isNaN(val)) return;
+                    if (val < min) val = min;
+                    if (val > max) val = max;
+                    target.value = val;
+                }
+            });
+            // Clamp on blur
+            badge.addEventListener('blur', function() {
+                const target = document.getElementById(this.dataset.target);
+                const min = parseFloat(target.min);
+                const max = parseFloat(target.max);
+                let val = parseFloat(this.value);
+                if (isNaN(val)) val = min;
+                if (val < min) val = min;
+                if (val > max) val = max;
+                this.value = val;
+                target.value = val;
+            });
+        });
+
+        function resetForm() {
+            const defaults = {
+                fixed_acidity: 8.3, volatile_acidity: 0.5, citric_acid: 0.3,
+                residual_sugar: 2.5, chlorides: 0.08, free_sulfur_dioxide: 15,
+                total_sulfur_dioxide: 46, density: 0.9968, pH: 3.3,
+                sulphates: 0.65, alcohol: 10.4
+            };
+            for (const key in defaults) {
+                const slider = document.getElementById(key);
+                const badge = document.getElementById('badge-' + key);
+                if (slider) slider.value = defaults[key];
+                if (badge) badge.value = defaults[key];
+            }
+        }
+
+        document.getElementById('wineForm').addEventListener('submit', function() {
+            document.getElementById('btnText').textContent = 'Analyzing...';
+            document.getElementById('btnSpinner').classList.remove('hidden');
+            document.getElementById('predictBtn').disabled = true;
+        });
+
+        const resultCard = document.querySelector('.result-card');
+        if (resultCard) {
+            resultCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    </script>
+</body>
+</html>
